@@ -104,7 +104,7 @@ export async function onRequest(context) {
 // -------------------------
 // 根据文件类型判断是否 inline（直接显示）还是 attachment（下载）
 // -------------------------
-function fixResponse(originalResponse, requestUrl) {
+async function fixResponse(originalResponse, requestUrl) {
     const newHeaders = new Headers(originalResponse.headers);
 
     const contentType = originalResponse.headers.get("Content-Type") || "application/octet-stream";
@@ -123,7 +123,7 @@ function fixResponse(originalResponse, requestUrl) {
         }
     }
 
-    // MIME 类型判断
+    // MIME 类型判断（再保险）
     if (disposition !== "inline" && (contentType.startsWith("image/") || contentType.startsWith("video/") || contentType.startsWith("audio/"))) {
         disposition = "inline";
     }
@@ -135,7 +135,9 @@ function fixResponse(originalResponse, requestUrl) {
         newHeaders.set("Content-Type", "application/octet-stream");
     }
 
-    return new Response(originalResponse.body, {
+    // 用 arrayBuffer 克隆 body，保证可修改 header
+    const body = await originalResponse.arrayBuffer();
+    return new Response(body, {
         status: originalResponse.status,
         statusText: originalResponse.statusText,
         headers: newHeaders
