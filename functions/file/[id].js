@@ -4,7 +4,7 @@ export async function onRequest(context) {
 
     let fileUrl = 'https://telegra.ph/' + url.pathname + url.search;
 
-    // 判断是否是 Telegram Bot API 上传的文件（路径较长）
+    // 如果是 Telegram Bot API 上传的文件（路径较长）
     if (url.pathname.length > 39) {
         const fileId = url.pathname.split(".")[0].split("/")[2];
         const filePath = await getFilePath(env, fileId);
@@ -20,16 +20,16 @@ export async function onRequest(context) {
         body: request.body,
     });
 
-    if (!response.ok) return fixResponse(response, request.url);
+    if (!response.ok) return fixImageResponse(response);
 
     // Admin 页面允许直接查看
     const isAdmin = request.headers.get('Referer')?.includes(`${url.origin}/admin`);
-    if (isAdmin) return fixResponse(response, request.url);
+    if (isAdmin) return fixImageResponse(response);
 
     // KV 未初始化，直接返回文件
-    if (!env.img_url) return fixResponse(response, request.url);
+    if (!env.img_url) return fixImageResponse(response);
 
-    // 从 KV 获取 metadata
+    // 获取 KV metadata
     let record = await env.img_url.getWithMetadata(params.id);
     if (!record || !record.metadata) {
         record = {
@@ -54,9 +54,9 @@ export async function onRequest(context) {
         fileSize: record.metadata.fileSize || 0,
     };
 
-    // 白名单：直接显示
+    // 白名单直接显示
     if (metadata.ListType === "White") {
-        return fixResponse(response, request.url);
+        return fixImageResponse(response);
     }
 
     // 黑名单 / 成人内容 → 拦截
@@ -96,48 +96,21 @@ export async function onRequest(context) {
     // 保存 metadata
     await env.img_url.put(params.id, "", { metadata });
 
-    // 最终返回响应，区分显示 / 下载
-    return fixResponse(response, request.url);
+    // 返回图片，图片 inline，其他文件保持默认行为（浏览器决定下载）
+    return fixImageResponse(response);
 }
 
 
-// -------------------------
-// 根据文件类型判断是否 inline（直接显示）还是 attachment（下载）
-// -------------------------
-async function fixResponse(originalResponse, requestUrl) {
+// 处理图片直接显示
+function fixImageResponse(originalResponse) {
     const newHeaders = new Headers(originalResponse.headers);
+    const contentType = originalResponse.headers.get("Content-Type") || "";
 
-    const contentType = originalResponse.headers.get("Content-Type") || "application/octet-stream";
-
-    // 根据扩展名 + MIME 类型判断
-    const inlineExts = ['jpg','jpeg','png','gif','webp','bmp','tiff','mp4','webm','mov','mkv','avi','mp3','wav','ogg','m4a'];
-    const pathname = new URL(requestUrl).pathname.toLowerCase();
-
-    let disposition = "attachment"; // 默认下载
-
-    // 扩展名判断
-    for (const ext of inlineExts) {
-        if (pathname.endsWith('.' + ext)) {
-            disposition = "inline";
-            break;
-        }
+    if (contentType.startsWith("image/")) {
+        newHeaders.set("Content-Disposition", "inline");
     }
 
-    // MIME 类型判断（再保险）
-    if (disposition !== "inline" && (contentType.startsWith("image/") || contentType.startsWith("video/") || contentType.startsWith("audio/"))) {
-        disposition = "inline";
-    }
-
-    newHeaders.set("Content-Disposition", disposition);
-
-    // 修复 Telegram 有时返回的错误 Content-Type
-    if (disposition === "inline" && !contentType.startsWith("image/") && !contentType.startsWith("video/") && !contentType.startsWith("audio/")) {
-        newHeaders.set("Content-Type", "application/octet-stream");
-    }
-
-    // 用 arrayBuffer 克隆 body，保证可修改 header
-    const body = await originalResponse.arrayBuffer();
-    return new Response(body, {
+    return new Response(originalResponse.body, {
         status: originalResponse.status,
         statusText: originalResponse.statusText,
         headers: newHeaders
@@ -160,3 +133,4 @@ async function getFilePath(env, file_id) {
         return null;
     }
 }
+
